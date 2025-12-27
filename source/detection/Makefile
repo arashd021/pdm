@@ -29,11 +29,14 @@ COMMON_CFLAGS := -fPIC \
 # ------------------------------------------------------------
 DETECTION_SO := PDM-detection.so
 SCHEME_SO    := PDM-scheme3+.so
-VICTIM_BIN   := example/victim
+SCHEME3_SO   := PDM-scheme3.so
+CALIBRATION := calibration
 
 .PHONY: all clean
 
-all: $(DETECTION_SO) $(SCHEME_SO) $(VICTIM_BIN)
+all: $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO) $(CALIBRATION)
+
+
 
 # ============================================================
 # PDM-detection.so (ONNX Runtime, optimized)
@@ -49,13 +52,21 @@ $(SCHEME_SO): PDM-scheme3+.c
 	$(CC) -O0 $(COMMON_CFLAGS) -shared -o $@ $<
 
 # ============================================================
-# Example victim binary
+# PDM-scheme3.so (baseline Scheme 3)
 # ============================================================
-$(VICTIM_BIN): example/victim.c
-	$(CC) -O2 -o $@ $< -lrt
+$(SCHEME3_SO): PDM-scheme3.c
+	$(CC) -O0 $(COMMON_CFLAGS) -shared -o $@ $<
+
+# ============================================================
+# calibration (cache latency calibration tool)
+# ============================================================
+$(CALIBRATION): calibration.c
+	$(CC) -O2 -march=native -o $@ $<
+
 
 # ============================================================
 # Cleanup
 # ============================================================
 clean:
-	rm -f $(DETECTION_SO) $(SCHEME_SO) $(VICTIM_BIN)
+	rm -f $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO) $(CALIBRATION)
+

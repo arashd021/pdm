@@ -3,131 +3,60 @@
 This repository contains the artifacts for the paper "PROBE+DETECT+MITIGATE (PDM): Enabling Cloud Tenants to Self-Defend against Microarchitectural Attacks" submitted to USENIX Security 2026.
 
 
-
-
 ## Requirements
 Tests were made on a fresh Ubuntu 24.04 installation as of December 2025.
 
 `sudo apt update && sudo apt install -y build-essential libcapstone-dev libssl-dev libwolfssl-dev uthash-dev`
 
-### ONNXRuntime
-ONNXRuntime is required to compile PDM's detection models. This allows for better performance at inference.
-To install ONNXRuntime (v1.22):
-```
-cd ~
-wget https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz
-tar -xvf onnxruntime-linux-x64-1.22.0.tgz
-```
+
+# Overview 
+
+## Source code (`source` folder)
+
+### `detection` folder
+
+`PDM-detection.c`: Scheme3 probing with online ONNX-based ML inference.
+
+`PDM-scheme3.c`: Scheme3 probing without ML inference.
+
+`PDM-scheme3+.c`: standalone Scheme3+ probing without ML inference.
+
+`example/fr` is an example victim application, a FLUSH+RELOAD attack, and how to integrate PDM for detection.
+
+`example/fr-aes` is an example of FLUSH+RELOAD on OpenSSL AES and how to integrate PDM for detection.
+
+`example/spectre-pht` is an example of Spectre-PHT and how to integrate PDM for detection.
+
+These files correspond to the probing schemes (Section 3.1) and the detection engine (Section 3.2.2) of the paper and fulfill the paper’s commitment to release *probing and runtime inference source code*.
+
+### `mitigation` folder
+`PDM-encrypt.c` is the source code of the signal handler performing in-memory encryption through on-the-fly trampoline generation and inline binary rewriting.
+
+`example/*` examples of cryptographic primitives for testing. 
+
+These files correspond to the proposed in-memory encryption (Section 3.3) of the paper and fulfill the paper’s commitment to release the *in-memory encryption source code and pre-compiled binaries of applications with PDM integrated*.
 
 
 
 
+## Datasets and Models (`datasets` folder)
 
+The repository also includes datasets used in our experiments in both our local test-bed and on AWS Fargate, which include the normal activities of real-world applications, attack activities, natural noises from SPEC CPU 2017, artificial noises from memory stressors, and slow evasive attacks.
 
-## Build
+`fargate`: attack datasets collected on AWS Fargate container (presented in Table 2.b in Section 4.3.1).
 
+`testbed`: attack datasets collected on our local testbed, including natural noises from co-resident SPEC CPU 2017  (presented in Table 2.1 in Section 4.3.1).
 
-### Detection
-```
-cd ~/PDM/source/detection
-make
-```
-This builds `PDM-detection.so` (Scheme3 probing with online ONNX-based ML inference) and `PDM-scheme3+.so` (standalone Scheme3+ probing without ML inference) that can be loaded into a victim program to protect it (see Usage).
+`noise`: attack datasets collected on our local testbed, including artificial noises from memory stressors (presented in Figure 9 in Section 4.5.2).
 
+`testbed/evasive`: slow evasive attack datasets collected with different slowdown factors in our local testbed  (presented in Figure 10 in Section 4.5.3).
 
-### Mitigation
-
-Mitigation in PDM is done through in-memory encryption of the secret(s). `PDM-encrypt.c` is a handler that can be compiled along with a program. At the program startup, it will first apply mprotect(PROT_NONE) to secret pages so that any access to them raises a segmentation fault (SIGSEGV). The handler then catches those segfaults, builds a trampoline for each one and replaces the secret access instruction with a jump to a trampoline. The trampoline function encrypts the secret before it is written in memory, and decrypts it when the program wants to read it.
-
-Note that support for mitigation of already compiled programs (with LD_PRELOAD), or already running program (through library injection) will be added in the future.
-
-```
-cd ~/PDM/source/mitigation/example
-make
-```
-You can use the -DDEBUG flag during compilation to enable debugging mode and see generated trampolines.
+These files present the detection evaluation of the paper and fulfill the paper’s commitment to release * all the trained models and datasets used in our experiments, which include the normal activities of real-world applications, attack activities, natural noises from SPEC CPU 2017, and artificial noises from memory stressors, and slow evasive attacks*.
 
 
 
-
-
-## Usage 
-
-
-### Detection
-There are currently two ways of loading PDM's probing and detection modules, as follows.
-
-- LD_PRELOAD:
-One can load PDM at the start of a new process using LD_PRELOAD.
-
-For instance:
-```
-cd example
-sudo taskset -c 0 sh -c 'LD_PRELOAD=../PDM-detection.so ./victim'
-```
-
-- Library Injection:
-If one wishes to apply PDM to an already existing task, then library injection is suitable:
-
-First install the runtime .so library injection tool:
-```
-git clone https://github.com/kubo/injector
-cd injector
-make
-```
-
-Next, run the example victim application:
-```
-cd example
-sudo ./victim
-```
-
-Then, inject the shared library to the victim at runtime:
-```
-sudo ./injector -p `pgrep victim` detection/PDM-detection.so
-```
-
-
-### Mitigation
-
-We provide several examples of cryptographic primitives.
-
-Examples of cryptographic primitives in `source/mitigation/examples` can be executed in two modes, selected by a command-line argument:
-
-``` bash
-./ecdh 1
-./ecdh 2
-```
-
-> **Execution Modes**
-> - **1**: Run the primitive without protection  
-> - **2**: Run the primitive with mitigation enabled
-
-
-For guaranteed reproducibility across machines, a ready-to-use Docker image with precompiled ELF 64-bit binaries is provided.
-Run the container interactively:
-
-``` bash
-docker run --rm -it pdmanon123/pdm-artifacts
-```
-
-
-## Dataset and ML Model Training
-
-We provide some datasets and models trained on different platforms and applications in the `datasets` folder.
-Each dataset includes ML model weights (`.pth` and `.pkl` files) and Jupyter notebooks (`.ipynb` files).
-
-The detection datasets and model artifacts were tested with Python 3.9+. You will need the following Python packages:
-
-pandas, numpy, torch, scikit-learn, joblib
-
-You can install them with:
-
-``` bash
-pip install -r requirements.txt
-```
-
-Next, you can open the corresponding jupyter notebook for each environment (testbed or AWS Fargate) and run inference on each dataset.
+## Documentation
+A complete compilation and usage instructions are provided inside each subdirectory under `README.md`.
 
 
 ## Licenses

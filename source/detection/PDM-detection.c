@@ -24,16 +24,48 @@
 #include <signal.h>
 #include <setjmp.h>
 
+// ---- Address selection mode ----
+// Uncomment exactly ONE of these
+#define USE_FIXED_START_ADDR
+// #define USE_PROC_MAPS
+
+#define START_ADDR 0x7ffff6fdf000
+#define SIZE 3072
+
 #define NUM_FEATURES 8
 #define WINDOW_SIZE 16
-#define START_ADDR 0x7ffff7fcf000
 #define TARGET_OFFSET  20
-#define SIZE 1024
 #define PAGE_SIZE 4096
 #define CACHE_LINE_SIZE 64
 #define NUM_CACHE_LINES (SIZE / CACHE_LINE_SIZE)
 #define BATCH_SIZE 8
 #define PROBE_ROUND_SIZE SIZE/64
+
+// Cache Utils
+uint64_t rdtsc() {
+  uint64_t a, d;
+  asm volatile ("mfence");
+  asm volatile ("rdtsc" : "=a" (a), "=d" (d));
+  a = (d<<32) | a;
+  asm volatile ("mfence");
+  return a;
+}
+
+void maccess(void* p)
+{
+  asm volatile ("movq (%0), %%rax\n"
+    :
+    : "c" (p)
+    : "rax");
+}
+
+void flush(void* p) {
+    asm volatile ("clflush 0(%0)\n"
+      :
+      : "c" (p)
+      : "rax");
+}
+
 
 // -------------------- ONNX Runtime Integration -------------------- //
 const OrtApi* g_ort = NULL;
@@ -95,6 +127,9 @@ uintptr_t get_shared_secret_address(pid_t pid) {
     fprintf(stderr, "Failed to find 'shared_secret' in memory map.\n");
     return 0;
 }
+
+
+
 
 /* install once per process */
 static void ort_seatbelt_init(void)
@@ -384,9 +419,20 @@ void* PDM_Probing(void* arg) {
     // }
     // uintptr_t start_addr = base + TARGET_OFFSET;
     // uintptr_t start_addr = START_ADDR;
-    uintptr_t start_addr = get_shared_secret_address(getpid());
-    printf("Start Address Extracted by PDM: 0x%lx\n", start_addr);
+
+    uintptr_t start_addr = START_ADDR;
     size_t total_size = SIZE;
+
+    #ifdef USE_FIXED_START_ADDR
+        start_addr = START_ADDR;
+    #elif defined(USE_PROC_MAPS)
+        start_addr = get_shared_secret_address(getpid());
+    #else
+    #error "You must define either USE_FIXED_START_ADDR or USE_PROC_MAPS"
+    #endif
+
+    printf("Start Address Extracted by PDM: 0x%lx\n", start_addr);
+
     size_t batch_offset = 0;
     size_t addresses_per_batch = BATCH_SIZE;
 
@@ -399,25 +445,23 @@ void* PDM_Probing(void* arg) {
         // ---- First Round: ACCESS + RELOAD ----
         for (size_t i = 0; i < addresses_per_batch; i++) {
             uint8_t *ptr = (uint8_t*)(start_addr + batch_offset + i * CACHE_LINE_SIZE);
-            asm volatile("mfence");
-            asm volatile("movq (%0), %%rax\n" : : "r"(ptr) : "rax");
-            asm volatile("mfence");
-            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 1000000}, NULL);
-            asm volatile("mfence");
-            size_t timeDelta = __rdtsc();
-            asm volatile("mfence");
-            asm volatile("movq (%0), %%rax\n" : : "r"(ptr) : "rax");
-            asm volatile("mfence");
-            size_t delta = __rdtsc() - timeDelta;
-            asm volatile("mfence");
+            asm volatile ("mfence");
+            maccess(ptr);
+            asm volatile ("mfence");
+            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 300000}, NULL);
+            sched_yield();
+            size_t timeDelta = rdtsc();
+            maccess(ptr);
+            size_t delta = rdtsc() -  timeDelta;
 
             // printf("%zu\n", delta);
 
-            if (delta < 100)
+            // adjust threshold
+            if (delta < 500)
                 l1_hit++;
-            else if (delta < 230)
+            else if (delta < 700)
                 l3_hit++;
-            else if (delta < 450)
+            else if (delta < 1000)
                 miss++;
             else
                 bigmiss++;
@@ -427,25 +471,20 @@ void* PDM_Probing(void* arg) {
         for (size_t i = 0; i < addresses_per_batch; i++) {
             uint8_t *ptr = (uint8_t*)(start_addr + batch_offset + i * CACHE_LINE_SIZE);
             
-            asm volatile("mfence");
-            asm volatile("clflush (%0)" :: "r"(ptr));
-            asm volatile("mfence");
-            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 1000000}, NULL);
-            asm volatile("mfence");
-            size_t timeDelta = __rdtsc();
-            asm volatile("mfence");
-            asm volatile("movq (%0), %%rax\n" : : "r"(ptr) : "rax");
-            asm volatile("mfence");
-            size_t delta = __rdtsc() - timeDelta;
-            asm volatile("mfence");
+            flush(ptr);
+            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 300000}, NULL);
+            size_t time = rdtsc();
+            maccess(ptr);
+            size_t delta = rdtsc() - time;
 
             // printf("%zu\n", delta);
 
-            if (delta < 100)
+            // adjust threshold
+            if (delta < 500)
                 l1_hit2++;
-            else if (delta < 230)
+            else if (delta < 700)
                 l3_hit2++;
-            else if (delta < 450)
+            else if (delta < 1000)
                 miss2++;
             else
                 bigmiss2++;
@@ -520,160 +559,26 @@ void* PDM_Probing(void* arg) {
 }
 
 // -------------------- Initialization -------------------- //
+__attribute__((constructor)) __attribute__((visibility("default")))
+void init_library() {
+    int N = 1;
+    pthread_t tids[1];
+    pthread_attr_t attr1;
+    struct sched_param param1;
 
-/* --------------------------------------------------------------------------- */
-/*  libc interposition basics (needed by constructors below)                   */
-typedef int (*main_t)(int,char**,char**);
-typedef int (*libc_start_main_t)(main_t,int,char**,void(*)(void),
-                                 void(*)(void),void(*)(void),void*);
+    pthread_attr_init(&attr1);
+    param1.sched_priority = sched_get_priority_max(SCHED_OTHER);
+    pthread_attr_setschedpolicy(&attr1, SCHED_FIFO); 
+    pthread_attr_setschedparam(&attr1, &param1);
 
-/* one real definition – the linker needs this symbol */
-static main_t            real_prog_main  = NULL;
-static libc_start_main_t real_start_main = NULL;
-
-/* forward decl so constructors can start the thread */
-static void *PDM_probe_thread(void *arg);
-
-
-/* --------------------------------------------------------------------------- */
-/*  1. fork-safety: clear global state in a brand-new child                     */
-static void atfork_prepare(void)            { pthread_mutex_lock(&ort_big_lock); }
-static void atfork_parent(void)             { pthread_mutex_unlock(&ort_big_lock); }
-static void atfork_child(void)
-{
-    if (session && g_ort)        g_ort->ReleaseSession(session);
-    if (g_input_tensor && g_ort) g_ort->ReleaseValue(g_input_tensor);
-    if (g_memory_info && g_ort)  g_ort->ReleaseMemoryInfo(g_memory_info);
-
-    free(input_name);  input_name  = NULL;
-    free(output_name); output_name = NULL;
-
-    session        = NULL;
-    g_input_tensor = NULL;
-    g_memory_info  = NULL;
-    env            = NULL;                    /* force rebuild on demand */
-    ml_once        = (pthread_once_t)PTHREAD_ONCE_INIT;
-
-    pthread_mutex_unlock(&ort_big_lock);
-}
-
-static int  PDM_i_am_root = 0;
-static int  probe_created   = 0; 
-
-__attribute__((constructor))
-static void register_fork_handlers(void)
-{
-    pthread_atfork(atfork_prepare, atfork_parent, atfork_child);
-    if (getenv("PDM_ROOT") == NULL) {
-        setenv("PDM_ROOT", "1", 1);   /* inherit to children        */
-        PDM_i_am_root = 1;
-    }
-}
-
-__attribute__((constructor))
-static void PDM_runtime_init(void)
-{
-    /* If real_start_main is non-NULL, our __libc_start_main was already
-     * called (LD_PRELOAD path). In that case wrapped_main will take care
-     * of starting the probe thread – do nothing here.
-     */
-    if (real_start_main != NULL)
-        return;
-
-    /* Runtime injection path: we got dlopen()'d / injected into an already
-     * running process. There will be no future call to __libc_start_main,
-     * so we must start the probe thread here.
-     */
-    if (!PDM_i_am_root) {
-        /* register_fork_handlers may already have set this; if not,
-         * we make this process the root for PDM.
-         */
-        PDM_i_am_root = 1;
-    }
-
-    if (!probe_created++) {
-        if (!pthread_create(&probe_tid, NULL, PDM_probe_thread, NULL)) {
-            probe_alive = 1;
-        } else {
-            perror("[PDM] pthread_create (runtime)");
-        }
-    }
-}
-
-
-/* --------------------------------------------------------------------------- */
-/*  2. background probe thread                                                 */
-static void *PDM_probe_thread(void *arg)
-{
-    (void)arg;
-    // fprintf(stderr, "[PDM] probe thread started (pid=%d)\n", getpid());
-    PDM_Probing(NULL);
-    return NULL;          /* never reached */
-}
-
-
-/*  We replace the program’s main with this wrapper:                           *
- *    – creates the probe thread exactly once, *before* user code starts      *
- *    – then tail-calls the real program main                                  */
-static int wrapped_main(int argc, char **argv, char **envp)
-{
-    if (PDM_i_am_root && !probe_created++) {                        /* first call in *root*   */
-        pthread_t tid;
-        if (!pthread_create(&probe_tid, NULL, PDM_probe_thread, NULL)) {
-            probe_alive = 1;
-        } else {
-            perror("[PDM] pthread_create");
+    for (int i = 0; i < N; i++) {
+        if (pthread_create(&tids[i], &attr1, PDM_Probing, NULL) != 0) {
+            perror("pthread_create");
+            exit(1);
         }
     }
 
-    extern main_t real_prog_main;                  /* assigned below */
-    return real_prog_main(argc, argv, envp);
+    pthread_attr_destroy(&attr1);
 }
 
-
-__attribute__((visibility("default")))
-int __libc_start_main(main_t     main,
-                      int        argc,
-                      char     **ubp_av,
-                      void (*init)(void),
-                      void (*fini)(void),
-                      void (*rtld_fini)(void),
-                      void     *stack_end)
-{
-    if (!real_start_main) {
-        real_start_main = (libc_start_main_t)dlsym(RTLD_NEXT,
-                                                   "__libc_start_main");
-        if (!real_start_main) {
-            fputs("[PDM] dlsym failed for __libc_start_main\n", stderr);
-            _exit(1);
-        }
-    }
-
-    /* remember original program main so wrapper can tail-call it */
-    extern main_t real_prog_main;
-    real_prog_main = main;
-
-    /* hand control back to glibc, substituting our wrapper */
-    return real_start_main(wrapped_main, argc, ubp_av,
-                           init, fini, rtld_fini, stack_end);
-}
-
-/* --------------------------------------------------------------------------- */
-/*  3. tidy-up                                                                 */
-__attribute__((destructor))
-static void PDM_cleanup(void)
-{
-    if (probe_alive) {
-        atomic_store_explicit(&PDM_stop, 1, memory_order_relaxed);
-        pthread_join(probe_tid, NULL);          /* wait until it returns       */
-        probe_alive = 0;
-    }
-    if (session && g_ort)        g_ort->ReleaseSession(session);
-    if (g_input_tensor && g_ort) g_ort->ReleaseValue(g_input_tensor);
-    if (g_memory_info && g_ort)  g_ort->ReleaseMemoryInfo(g_memory_info);
-
-    free(input_name);
-    free(output_name);
-
-    if (env && g_ort)            g_ort->ReleaseEnv(env);
-}
+// -------------------- End of Program -------------------- //

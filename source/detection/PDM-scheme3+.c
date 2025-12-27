@@ -21,15 +21,24 @@
 #include <sys/mman.h>
 #include <stdbool.h>
 
+// ---- Address selection mode ----
+// Uncomment exactly ONE of these
+#define USE_FIXED_START_ADDR
+// #define USE_PROC_MAPS
+
+#define START_ADDR 0x7ffff6fdf000
+#define SIZE 3072
+
+// #define SIZE NUM_PAGES*PAGE_SIZE
+
 #define CACHE_LINE 64
 #define PAGE_SIZE 4096
 #define NUM_PAGES 2
-#define START_ADDR 0x7ffff7fc5000
-#define SIZE NUM_PAGES*PAGE_SIZE
 #define BATCH_SIZE 8
 #define WAIT_TIME  1000000
 #define PROBES_PER_SIZE SIZE/CACHE_LINE
 #define ATTACK_COOLDOWN_SEC  2
+
 
 // Monotonic time in nanoseconds (immune to wall-clock jumps)
 static inline uint64_t mono_now_ns(void) {
@@ -102,9 +111,17 @@ uintptr_t get_shared_secret_address(pid_t pid) {
 int attackPrinted, counter = 0;
 
 void* PDM_Probing(void* arg) {
-    // sleep(2);
 
-    uintptr_t start_addr = get_shared_secret_address(getpid());
+    uintptr_t start_addr = START_ADDR;
+
+    #ifdef USE_FIXED_START_ADDR
+        start_addr = START_ADDR;
+    #elif defined(USE_PROC_MAPS)
+        start_addr = get_shared_secret_address(getpid());
+    #else
+    #error "You must define either USE_FIXED_START_ADDR or USE_PROC_MAPS"
+    #endif
+
     printf("Start Address Extracted by PDM: 0x%lx\n", start_addr);
 
     size_t probes1 = 0;
@@ -147,10 +164,11 @@ void* PDM_Probing(void* arg) {
             asm volatile("mfence");
             probes1++;
 
+            // printf("%zu\n", delta);
             size_t page = roff / PAGE_SIZE;
-            if      (delta < 100)  l1_p[page] ++;
-            else if (delta < 230)  l3_p[page] ++;
-            else if (delta < 450)  m_p [page] ++;
+            if      (delta < 500)  l1_p[page] ++;
+            else if (delta < 700)  l3_p[page] ++;
+            else if (delta < 900)  m_p [page] ++;
             else                   bm_p[page]++;
             cnt_p[page]++;
             for (size_t p = 0; p < NUM_PAGES; p++) {
@@ -170,26 +188,22 @@ void* PDM_Probing(void* arg) {
                     double mr   = 100.0*m_p [p]/BATCH_SIZE;
                     double bmr  = 100.0*bm_p[p]/BATCH_SIZE;
                     /* second-round ratios not used yet → zeros */
-                    // print_ratios(timeStr, p, l1r,l3r,mr,bmr,0,0,0,0);
+                    print_ratios(timeStr, p, l1r,l3r,mr,bmr,0,0,0,0);
 
                     int attack = (l1r <= 50);
                     uint64_t now_ns = mono_now_ns();
 
-                    if (attack && !attackPrinted) {
-                        printf("\nAttack detected at %s\n", timeStr);
-                        attackPrinted = 1;
-                    } else if (!attack && attackPrinted) {
-                        counter++;
-                    }
+                    // if (attack && !attackPrinted) {
+                    //     printf("\nAttack detected at %s\n", timeStr);
+                    //     attackPrinted = 1;
+                    // } else if (!attack && attackPrinted) {
+                    //     counter++;
+                    // }
 
-                    if (counter>= 2){
-                        attackPrinted = 0;
-                        counter = 0;
-                    }
-                        
-
-                    if (l1r <= 90)
-                        usleep(600);
+                    // if (counter>= 2){
+                    //     attackPrinted = 0;
+                    //     counter = 0;
+                    // }
 
                     /* reset this page’s mini-counters */
                     l1_p[p]=l3_p[p]=m_p[p]=bm_p[p]=cnt_p[p]=0;
