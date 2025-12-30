@@ -1,5 +1,5 @@
 // Victim application based on Jan Wichelmann's code for CipherFix => https://github.com/UzL-ITS/cipherfix
-// gcc -o rsa rsa.c ../../PDM-encrypt.c -g -O0 -no-pie -fno-omit-frame-pointer -fno-stack-protector -maes -msse2 -march=native -lcrypto -lcapstone -pthread -DPDM_MASKING=1
+// gcc -o rsa rsa.c -g -O0 -rdynamic -no-pie -fno-omit-frame-pointer -fno-stack-protector -maes -msse2 -march=native -lcrypto -lcapstone -pthread
 // (use -DDEBUG for debugging information)
 
 #define _GNU_SOURCE
@@ -22,7 +22,8 @@
 #define CLOCK CLOCK_MONOTONIC
 
 #define PAGE_SZ 4096
-extern void install_guard(void *addr, size_t len);
+__attribute__((weak)) void install_guard(void *addr, size_t len);
+
 static void die(const char *msg) { perror(msg); exit(EXIT_FAILURE); }
 
 static uint8_t *secret = NULL;         // our single guarded page
@@ -324,7 +325,12 @@ int main(int argc, char *argv[])
 
     if (disable_secret) {
         printf("[victim] guarding key\n");
-        install_guard(secret, PAGE_SZ);
+        if (install_guard) {
+            install_guard(secret, PAGE_SZ);
+        } else {
+            fprintf(stderr, "[victim] install_guard not found (run with LD_PRELOAD?)\n");
+        }
+
     }
 
     cf_run_target(!perf || n==0);

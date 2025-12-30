@@ -26,7 +26,7 @@
 // #define USE_PROC_MAPS
 
 #define START_ADDR 0x7ffff6fdf000
-#define SIZE 3072
+#define SIZE 1024
 
 #define BATCH_SIZE 8
 #define CACHE_LINE 64
@@ -149,7 +149,7 @@ void* PDM_Probing(void* arg) {
             asm volatile ("mfence");
             maccess(ptr);
             asm volatile ("mfence");
-            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 300000}, NULL);
+            nanosleep(&(struct timespec){.tv_sec = 0, .tv_nsec = 1000000}, NULL);
             sched_yield();
             size_t timeDelta = rdtsc();
             maccess(ptr);

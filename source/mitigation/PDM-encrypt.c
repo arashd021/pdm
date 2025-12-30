@@ -1,3 +1,6 @@
+// gcc -shared -fPIC -o PDM-encrypt.so PDM-encrypt.c -g -O0 -fno-omit-frame-pointer -fno-stack-protector -lcapstone -pthread -ldl -DPDM_MASKING=1
+
+
 #define _GNU_SOURCE
 #include <capstone/capstone.h>
 #include <dlfcn.h>

@@ -1,5 +1,5 @@
 // Victim application based on Jan Wichelmann's code for CipherFix => https://github.com/UzL-ITS/cipherfix
-// gcc -o aes aes.c ../../PDM-encrypt.c -O2 -fstack-reuse=none -fno-optimize-sibling-calls -mno-push-args -fPIE -pie -I$CF_WOLFSSL_DIR/include -L$CF_WOLFSSL_DIR/lib -lwolfssl -lcapstone -pthread -DPDM_MASKING=1
+// gcc -o aes aes.c -O2 -rdynamic -fstack-reuse=none -fno-optimize-sibling-calls -mno-push-args -fPIE -pie -I$CF_WOLFSSL_DIR/include -L$CF_WOLFSSL_DIR/lib -lwolfssl -lcapstone -pthread
 // (use -DDEBUG for debugging information)
 
 #define _GNU_SOURCE
@@ -15,7 +15,7 @@
 #include <stdint.h>
 #define CLOCK CLOCK_MONOTONIC
 
-extern void install_guard(void *addr, size_t len);
+__attribute__((weak)) void install_guard(void *addr, size_t len);
 bool disable_secret = true;
 static void die(const char *msg) { perror(msg); exit(EXIT_FAILURE); }
 
@@ -136,7 +136,11 @@ int main(int argc, char *argv[])
 
     if (disable_secret) {
         printf("[victim] guarding key\n");
-        install_guard(aesCtx, sizeof *aesCtx);
+        if (install_guard) {
+            install_guard(aesCtx, sizeof *aesCtx);
+        } else {
+            fprintf(stderr, "[victim] install_guard not found (run with LD_PRELOAD?)\n");
+        }
     }
 
     int n = 10000;
@@ -154,7 +158,6 @@ int main(int argc, char *argv[])
     while (n-->0) {
         cf_run_target(!perf || n==0);
         cf_prepare_next();
-        // nanosleep(&(struct timespec){.tv_sec=0,.tv_nsec=20000000}, NULL);
     }
 
     clock_gettime(CLOCK, &t2);
