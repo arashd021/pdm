@@ -23,11 +23,16 @@
 
 // ---- Address selection mode ----
 // Uncomment exactly ONE of these
-#define USE_FIXED_START_ADDR
-// #define USE_PROC_MAPS
+// #define USE_FIXED_START_ADDR
+#define USE_PROC_MAPS
 
 #define START_ADDR 0x7ffff6fdf000
 #define SIZE 3072
+
+// Cache thresholds (cycles) - set via calibration
+#define THR_L1   500
+#define THR_L3   700
+#define THR_MISS 1000
 
 // #define SIZE NUM_PAGES*PAGE_SIZE
 
@@ -166,9 +171,9 @@ void* PDM_Probing(void* arg) {
 
             // printf("%zu\n", delta);
             size_t page = roff / PAGE_SIZE;
-            if      (delta < 500)  l1_p[page] ++;
-            else if (delta < 700)  l3_p[page] ++;
-            else if (delta < 900)  m_p [page] ++;
+            if      (delta < THR_L1)  l1_p[page] ++;
+            else if (delta < THR_L3)  l3_p[page] ++;
+            else if (delta < THR_MISS)  m_p [page] ++;
             else                   bm_p[page]++;
             cnt_p[page]++;
             for (size_t p = 0; p < NUM_PAGES; p++) {

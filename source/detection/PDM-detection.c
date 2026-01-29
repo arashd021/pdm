@@ -26,11 +26,17 @@
 
 // ---- Address selection mode ----
 // Uncomment exactly ONE of these
-#define USE_FIXED_START_ADDR
-// #define USE_PROC_MAPS
+// #define USE_FIXED_START_ADDR
+#define USE_PROC_MAPS
 
 #define START_ADDR 0x7ffff6fdf000
 #define SIZE 3072
+
+// Cache thresholds (cycles) - set via calibration
+#define THR_L1   500
+#define THR_L3   700
+#define THR_MISS 1000
+
 
 #define NUM_FEATURES 8
 #define WINDOW_SIZE 16
@@ -457,11 +463,11 @@ void* PDM_Probing(void* arg) {
             // printf("%zu\n", delta);
 
             // adjust threshold
-            if (delta < 500)
+            if (delta < THR_L1)
                 l1_hit++;
-            else if (delta < 700)
+            else if (delta < THR_L3)
                 l3_hit++;
-            else if (delta < 1000)
+            else if (delta < THR_MISS)
                 miss++;
             else
                 bigmiss++;
@@ -480,11 +486,11 @@ void* PDM_Probing(void* arg) {
             // printf("%zu\n", delta);
 
             // adjust threshold
-            if (delta < 500)
+            if (delta < THR_L1)
                 l1_hit2++;
-            else if (delta < 700)
+            else if (delta < THR_L3)
                 l3_hit2++;
-            else if (delta < 1000)
+            else if (delta < THR_MISS)
                 miss2++;
             else
                 bigmiss2++;
