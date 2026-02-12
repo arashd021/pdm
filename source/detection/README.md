@@ -1,7 +1,7 @@
-### Probing and Detection
+## Probing and Detection
 
 
-## ONNXRuntime
+### ONNXRuntime
 ONNXRuntime is required to compile PDM's detection models. This allows for better performance at inference.
 To install ONNXRuntime (v1.22):
 ```
@@ -11,7 +11,7 @@ tar -xvf onnxruntime-linux-x64-1.22.0.tgz
 ```
 
 
-## Threshold Calibration
+### Threshold Calibration
 
 This repository contains a calibration tool to identify the thresholds required by PDM for different layers of cache. This code is based on the calibration implementation provided by Daniel Gruss (https://github.com/IAIK/flush_flush) but slightly modified to provide 3 distinct thresholds for different cache levels. To find the thresholds, simply run:
 
@@ -31,7 +31,7 @@ In each of the 3 files PDM-detection*.c, replace
 
 with the correct thresholds for your system, as given by ./calibration.
 
-## Build
+### Build
 
 ```
 make
@@ -40,7 +40,7 @@ This builds `PDM-detection.so` (Scheme3 probing with online ONNX-based ML infere
 
 
 
-## Usage 
+### Usage 
 
 There are currently two ways of loading PDM's probing and detection modules, as follows.
 
