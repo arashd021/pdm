@@ -11,20 +11,12 @@ tar -xvf onnxruntime-linux-x64-1.22.0.tgz
 ```
 
 
-
-## Build
-
-```
-cd ~/PDM/source/detection
-make
-```
-This builds `PDM-detection.so` (Scheme3 probing with online ONNX-based ML inference), `PDM-scheme3.so` (standalone Scheme3 probing without ML inference), and `PDM-scheme3+.so` (standalone Scheme3+ probing without ML inference) that can be loaded into a victim program to protect it (see Usage).
-
 ## Threshold Calibration
 
 This repository contains a calibration tool to identify the thresholds required by PDM for different layers of cache. This code is based on the calibration implementation provided by Daniel Gruss (https://github.com/IAIK/flush_flush) but slightly modified to provide 3 distinct thresholds for different cache levels. To find the thresholds, simply run:
 
 ```
+cd ~/PDM/source/detection
 ./calibration
 ```
 
@@ -38,6 +30,15 @@ In each of the 3 files PDM-detection*.c, replace
 ```
 
 with the correct thresholds for your system, as given by ./calibration.
+
+## Build
+
+```
+make
+```
+This builds `PDM-detection.so` (Scheme3 probing with online ONNX-based ML inference), `PDM-scheme3.so` (standalone Scheme3 probing without ML inference), and `PDM-scheme3+.so` (standalone Scheme3+ probing without ML inference) that can be loaded into a victim program to protect it (see Usage).
+
+
 
 ## Usage 
 
