@@ -28,7 +28,16 @@ This repository contains a calibration tool to identify the thresholds required 
 ./calibration
 ```
 
-And then update the thresholds in PDM's probing codes to match your system's thresholds.
+In each of the 3 files PDM-detection*.c, replace
+
+```
+// Cache thresholds (cycles) - set via calibration
+#define THR_L1   500
+#define THR_L3   700
+#define THR_MISS 1000
+```
+
+with the correct thresholds for your system, as given by ./calibration.
 
 ## Usage 
 
@@ -40,7 +49,8 @@ One can load PDM at the start of a new process using LD_PRELOAD.
 For instance:
 ```
 cd example/fr
-sudo taskset -c 0 sh -c 'LD_PRELOAD=../PDM-detection.so ./victim'
+make
+taskset -c 0 sh -c 'LD_PRELOAD=../../PDM-detection.so ./victim'
 ```
 
 - Library Injection:

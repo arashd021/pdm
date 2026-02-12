@@ -5,7 +5,7 @@ Each dataset includes ML model weights (`.pth` and `.pkl` files) and Jupyter not
 
 The detection datasets and model artifacts were tested with Python 3.9+. You will need the following Python packages:
 
-pandas, numpy, torch, scikit-learn, joblib
+pandas, numpy, torch, scikit-learn, joblib, jupyter, ipykernel
 
 You can install them with:
 
@@ -13,4 +13,8 @@ You can install them with:
 pip install -r requirements.txt
 ```
 
-Next, you can open the corresponding Jupyter notebook for each environment (testbed or AWS Fargate) and run inference on each dataset.
+Next, you can open the corresponding Jupyter notebook for each environment (testbed or AWS Fargate) and run inference on each dataset. Running the command below will start a local server and print a URL (e.g., http://127.0.0.1:8888/...) which you should open in a web browser.
+
+``` bash
+python3 -m jupyter notebook
+```

@@ -104,7 +104,7 @@ uintptr_t get_shared_secret_address(pid_t pid) {
 
     char line[256];
     while (fgets(line, sizeof(line), maps_file)) {
-        if (strstr(line, "shared_secret") && strstr(line, "rw-s")) {
+        if (strstr(line, "/dev/shm/shared_secret") || strstr(line, "shared_secret")) {
             char *dash_pos = strchr(line, '-');
             if (dash_pos) {
                 *dash_pos = '\0';
@@ -128,7 +128,11 @@ void* PDM_Probing(void* arg) {
     #ifdef USE_FIXED_START_ADDR
         start_addr = START_ADDR;
     #elif defined(USE_PROC_MAPS)
-        start_addr = get_shared_secret_address(getpid());
+        while (1) {
+            start_addr = get_shared_secret_address(getpid());
+            if (start_addr != 0) break;
+            usleep(10 * 1000);
+        }
     #else
     #error "You must define either USE_FIXED_START_ADDR or USE_PROC_MAPS"
     #endif
@@ -161,11 +165,11 @@ void* PDM_Probing(void* arg) {
             size_t delta = rdtsc() -  timeDelta;
             // printf("%zu\n", delta);
 
-            if (delta < 500)
+            if (delta < THR_L1)
                 l1_hit++;
-            else if (delta < 700)
+            else if (delta < THR_L3)
                 l3_hit++;
-            else if (delta < 1000)
+            else if (delta < THR_MISS)
                 miss++;
             else
                 bigmiss++;

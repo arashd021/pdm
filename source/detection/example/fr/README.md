@@ -13,7 +13,7 @@ The output binaries are `./victim` and `./F+R`.
 To run the victim binary with PDM integrate run:
 
 ```
-sudo LD_PRELOAD=../../PDM-detection.so taskset -c 0 ./victim
+LD_PRELOAD=../../PDM-detection.so taskset -c 0 ./victim
 ```
 
 By enabling the flag `#define USE_PROC_MAPS` in PDM's probing codes, the probing range will be automatically extracted using the function `get_shared_secret_address(getpid());`.

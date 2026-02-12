@@ -6,7 +6,7 @@ This repository contains the artifacts for the paper "PROBE+DETECT+MITIGATE (PDM
 ## Requirements
 Tests were made on a fresh Ubuntu 24.04 installation as of December 2025.
 
-`sudo apt update && sudo apt install -y build-essential libcapstone-dev libssl-dev libwolfssl-dev uthash-dev`
+`sudo apt update && sudo apt install -y build-essential libcapstone-dev libssl-dev libwolfssl-dev uthash-dev python3-pip`
 
 
 # Overview 

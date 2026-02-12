@@ -40,10 +40,10 @@ int main(int argc, char *argv[]) {
     // Create a shared memory object
     const char *shm_name = "/shared_secret";
 
-    // if (shm_unlink(shm_name) == -1 && errno != ENOENT) {
-    //     perror("shm_unlink (stale root-owned object?)");
-    //     exit(EXIT_FAILURE);
-    // }
+    if (shm_unlink(shm_name) == -1 && errno != ENOENT) {
+        perror("stale root-owned object exists, run (sudo rm -f /dev/shm/shared_secret) and try again without sudo.");
+        exit(EXIT_FAILURE);
+    }
 
     int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, 0666);
     // int shm_fd = shm_open(shm_name, O_RDONLY, 0666);
