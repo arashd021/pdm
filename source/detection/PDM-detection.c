@@ -23,19 +23,7 @@
 #include <stdatomic.h>
 #include <signal.h>
 #include <setjmp.h>
-
-// ---- Address selection mode ----
-// Uncomment exactly ONE of these
-// #define USE_FIXED_START_ADDR
-#define USE_PROC_MAPS
-
-#define START_ADDR 0x7ffff6fdf000
-#define SIZE 3072
-
-// Cache thresholds (cycles) - set via calibration
-#define THR_L1   500
-#define THR_L3   700
-#define THR_MISS 1000
+#include "constants.h"
 
 
 #define NUM_FEATURES 8
@@ -118,7 +106,7 @@ uintptr_t get_shared_secret_address(pid_t pid) {
 
     char line[256];
     while (fgets(line, sizeof(line), maps_file)) {
-        if (strstr(line, "shared_secret") && strstr(line, "rw-s")) {
+        if (strstr(line, "/dev/shm/shared_secret") || strstr(line, "shared_secret")) {
             char *dash_pos = strchr(line, '-');
             if (dash_pos) {
                 *dash_pos = '\0';
@@ -432,7 +420,11 @@ void* PDM_Probing(void* arg) {
     #ifdef USE_FIXED_START_ADDR
         start_addr = START_ADDR;
     #elif defined(USE_PROC_MAPS)
-        start_addr = get_shared_secret_address(getpid());
+        while (1) {
+            start_addr = get_shared_secret_address(getpid());
+            if (start_addr != 0) break;
+            usleep(10 * 1000);
+        }
     #else
     #error "You must define either USE_FIXED_START_ADDR or USE_PROC_MAPS"
     #endif

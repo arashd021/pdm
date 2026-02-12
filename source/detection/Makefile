@@ -30,11 +30,10 @@ COMMON_CFLAGS := -fPIC \
 DETECTION_SO := PDM-detection.so
 SCHEME_SO    := PDM-scheme3+.so
 SCHEME3_SO   := PDM-scheme3.so
-CALIBRATION := calibration
 
 .PHONY: all clean
 
-all: $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO) $(CALIBRATION)
+all: $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO)
 
 
 
@@ -58,16 +57,9 @@ $(SCHEME3_SO): PDM-scheme3.c
 	$(CC) -O0 $(COMMON_CFLAGS) -shared -o $@ $<
 
 # ============================================================
-# calibration (cache latency calibration tool)
-# ============================================================
-$(CALIBRATION): calibration.c
-	$(CC) -O2 -march=native -o $@ $<
-
-
-# ============================================================
 # Cleanup
 # ============================================================
 clean:
-	rm -f $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO) $(CALIBRATION)
+	rm -f $(DETECTION_SO) $(SCHEME_SO) $(SCHEME3_SO)
 
 

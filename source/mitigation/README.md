@@ -7,7 +7,7 @@ Mitigation in PDM is done through in-memory encryption of the secret(s). `PDM-en
 
 
 ```
-cd ~/PDM/source/mitigation
+cd ~/pdm/source/mitigation
 make
 ```
 
@@ -24,6 +24,7 @@ We provide several examples of cryptographic primitives.
 Examples of cryptographic primitives in `source/mitigation/examples` can be executed in two modes with LD_PRELOAD, selected by a command-line argument:
 
 ``` bash
+cd ~/pdm/source/mitigation/example/openssl
 LD_PRELOAD=../../PDM-encrypt.so ./ecdh 1
 LD_PRELOAD=../../PDM-encrypt.so ./ecdh 2
 ```

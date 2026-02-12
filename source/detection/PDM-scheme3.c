@@ -18,20 +18,8 @@
 #include <fcntl.h>
 #include <sys/ptrace.h>
 #include <sys/mman.h>
+#include "constants.h"
 
-
-// ---- Address selection mode ----
-// Uncomment exactly ONE of these
-// #define USE_FIXED_START_ADDR
-#define USE_PROC_MAPS
-
-#define START_ADDR 0x7ffff6fdf000
-#define SIZE 1024
-
-// Cache thresholds (cycles) - set via calibration
-#define THR_L1   500
-#define THR_L3   700
-#define THR_MISS 1000
 
 #define BATCH_SIZE 8
 #define CACHE_LINE 64
