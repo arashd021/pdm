@@ -23,6 +23,9 @@
 #include <stdatomic.h>
 #include <signal.h>
 #include <setjmp.h>
+#include <dlfcn.h>
+#include <libgen.h>
+#include <limits.h>
 #include "constants.h"
 
 
@@ -91,6 +94,26 @@ static void ort_sig_handler(int sig, siginfo_t *si, void *ctx)
     struct sigaction sa = { .sa_handler = SIG_DFL };
     sigaction(sig, &sa, NULL);
     raise(sig);
+}
+
+static int get_model_path(char out[PATH_MAX]) {
+    Dl_info info;
+    if (dladdr((void*)&get_model_path, &info) == 0 || !info.dli_fname) {
+        return -1;
+    }
+
+    char so_path[PATH_MAX];
+    snprintf(so_path, sizeof(so_path), "%s", info.dli_fname);
+
+    char so_path_copy[PATH_MAX];
+    snprintf(so_path_copy, sizeof(so_path_copy), "%s", so_path);
+
+    const char *dir = dirname(so_path_copy);
+    if (!dir) return -1;
+
+    // model sits next to the .so
+    snprintf(out, PATH_MAX, "%s/%s", dir, "PDM-model.onnx");
+    return 0;
 }
 
 
@@ -389,8 +412,13 @@ static void build_ml_once(void)
             _exit(1);
         }
     }
-    // Update if needed; absolute path only
-    const char *model = "/home/vagrant/PDM/source/detection/PDM-model.onnx";
+    char model_path[PATH_MAX];
+    if (get_model_path(model_path) != 0) {
+        fprintf(stderr, "[PDM] Failed to resolve model path next to shared library\n");
+        exit(1);
+    }
+    const char *model = model_path;
+
 
     session = load_model(env, model);
     if (!session) {              /* give up */
