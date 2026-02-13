@@ -39,7 +39,7 @@ kill -SIGUSR2 $(pidof spectre.out)
 
 ## Detection with PDM
 
-Enable the flag `#define USE_FIXED_START_ADDR` in PDM's probing codes, and update PDM's probing range to include the secret address printed by `spectre.out` and recompile. For instance:
+Enable the flag `#define USE_FIXED_START_ADDR` in `constants.h`, and update PDM's probing range to include the secret address printed by `spectre.out` and recompile. For instance:
 
 ```
     #define USE_FIXED_START_ADDR

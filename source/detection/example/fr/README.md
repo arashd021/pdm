@@ -16,7 +16,7 @@ To run the victim binary with PDM integrate run:
 LD_PRELOAD=../../PDM-detection.so taskset -c 0 ./victim
 ```
 
-By enabling the flag `#define USE_PROC_MAPS` in PDM's probing codes, the probing range will be automatically extracted using the function `get_shared_secret_address(getpid());`.
+By enabling the flag `#define USE_PROC_MAPS` in `constants.h`, the probing range will be automatically extracted using the function `get_shared_secret_address(getpid());`.
 
 You should see benign datapoints like:
 

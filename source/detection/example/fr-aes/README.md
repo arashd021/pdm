@@ -69,7 +69,7 @@ gcc aes-workload.c -o aes-workload
 
 ## Detection with PDM
 
-Next, we enables the flag `#define USE_FIXED_START_ADDR` in PDM's probing codes, and update PDM's probing range to include the T-table addresses and recompile. For instance:
+Next, we enables the flag `#define USE_FIXED_START_ADDR` in `constants.h`, and update PDM's probing range to include the T-table addresses and recompile. For instance:
 
 ```
     #define USE_FIXED_START_ADDR
