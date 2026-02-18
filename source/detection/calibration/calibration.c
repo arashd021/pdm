@@ -112,7 +112,7 @@ int main(int argc, char** argv)
         hit_max_i = i;
       }
 
-      // First "real" miss bin (avoid noise); keep your old heuristic
+      // First "real" miss bin (avoid noise)
       if (miss_histogram[i] > 3 && miss_min_i == 0)
         miss_min_i = i;
 
@@ -121,7 +121,6 @@ int main(int argc, char** argv)
         miss_max_i = i;
     }
 
-    // Sanity message (same spirit as original)
     if (miss_min_i > hit_max_i + 4)
       printf("Flush+Reload possible!\n");
     else if (miss_min_i > hit_max_i + 2)
@@ -164,7 +163,7 @@ int main(int argc, char** argv)
       if (T_L1_i >= 79) T_L1_i = 79;
     }
 
-    // ---- 2) T_L3: split L3-ish vs memory miss using both histograms (your original method) ----
+    // ---- 2) T_L3: split L3-ish vs memory miss using both histograms ----
     size_t start_i = (second_peak_i > hit_max_i ? second_peak_i : hit_max_i);
     if (start_i >= 79) start_i = 79;
 

@@ -15,8 +15,18 @@ DEBUG_FLAGS  := -O0 -no-pie
 OPT_FLAGS    := -O2
 EXPORT_FLAGS := -rdynamic
 
+# =========================
+# Optional DEBUG define
+# =========================
+DEBUG ?= 0
+ifeq ($(DEBUG),1)
+  DBG_DEFINE := -DDEBUG
+else
+  DBG_DEFINE :=
+endif
+
 # Build the handler as shared object
-PDM_SO_FLAGS := -shared -fPIC -g -O0 -fno-omit-frame-pointer -fno-stack-protector -pthread -ldl -DPDM_MASKING=1
+PDM_SO_FLAGS := -shared -fPIC -g -O0 -fno-omit-frame-pointer -fno-stack-protector -pthread -ldl -DPDM_MASKING=1 $(DBG_DEFINE)
 PDM_SO_LIBS  := -lcapstone
 
 # Victim libs (capstone is NOT needed unless victim code uses it)

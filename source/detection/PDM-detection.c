@@ -145,9 +145,6 @@ uintptr_t get_shared_secret_address(pid_t pid) {
     return 0;
 }
 
-
-
-
 /* install once per process */
 static void ort_seatbelt_init(void)
 {
@@ -346,8 +343,6 @@ float run_inference(OrtSession* session, const char* input_name, const char* out
     return result;
 }
 
-
-
 // Function to print ratios
 void print_ratios(const char* timeStr, float l1hitratio, float l3hitratio, float missratio, float bigmissratio, 
                  float l1hitratio2, float l3hitratio2, float missratio2, float bigmissratio2, size_t batch_offset,float model_output) {
@@ -392,8 +387,6 @@ run_inference_safe(OrtSession *sess,
     pthread_mutex_unlock(&ort_big_lock);
     return rv;
 }
-
-
 
 /* ---------- 3.  Lazy one-time ML initialisation per *process* ------------------- */
 static pthread_once_t ml_once = PTHREAD_ONCE_INIT;
@@ -548,7 +541,7 @@ void* PDM_Probing(void* arg) {
         struct timespec start, end;
         clock_gettime(CLOCK_MONOTONIC, &start);
 
-        // Only activate ML when necessary
+        // Only activate ML when necessary (inference switch)
         if (!atomic_load_explicit(&PDM_stop, memory_order_relaxed) && (l1hitratio2 > 25 || missratio > 25)) {
             pthread_once(&ml_once, build_ml_once);
             model_output = run_inference_safe(session, input_name, output_name, input_data);
@@ -606,5 +599,4 @@ void init_library() {
 
     pthread_attr_destroy(&attr1);
 }
-
 // -------------------- End of Program -------------------- //

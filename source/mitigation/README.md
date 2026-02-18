@@ -13,7 +13,9 @@ make
 
 You can use the -DDEBUG flag during compilation to enable debugging mode and see generated trampolines.
 
-
+```
+make DEBUG=1
+```
 
 ## Usage 
 
