@@ -11,24 +11,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <stdbool.h>
 #include <time.h>
 #include <sys/mman.h>
 #include <stdint.h>
+#include <inttypes.h>
 #define CLOCK CLOCK_MONOTONIC
 #include <openssl/crypto.h>
+#include <openssl/bn.h>
 
 
 __attribute__((weak)) void install_guard(void *addr, size_t len);
 
-int   g_pkey;
 bool disable_secret = true;
 static bool hook_enabled = false;
-static bool secret_handed = false;
+static int  hook_remaining = 0;
+static int  next_slot = 0;
 char *secret;
 
-// Our own really simple and non-random number generator
+#define PAGE_SZ 4096
+#define SLOT_SIZE 512
+#define GUARDED_LEN (2 * SLOT_SIZE)
+
+static inline int in_secret(void *ptr)
+{
+    return secret &&
+           ptr >= (void *)secret &&
+           ptr <  (void *)(secret + PAGE_SZ);
+}
+
 static uint8_t randState[32] = { 0 };
 
 static void dump(const char *lbl, const uint8_t *p, size_t n)
@@ -127,7 +138,7 @@ RAND_METHOD rand_meth = {
     //     0x5a, 0x8a, 0xbb, 0x50, 0xb6, 0x6b, 0x2d, 0x95
     // };
 
-// // Key (48 bytes → secp384r1 = 384-bit private key)
+// Key (48 bytes → secp384r1 = 384-bit private key)
 uint8_t key[48] = {
     0x97, 0x3B, 0x45, 0xA2, 0x6F, 0x12, 0xE5, 0x9C,
     0x01, 0xBC, 0xDE, 0x34, 0x56, 0x78, 0x9A, 0xFB,
@@ -145,8 +156,6 @@ EC_KEY *eckey;
 EC_GROUP *ecgroup;
 
 static void die(const char *msg) { perror(msg); exit(EXIT_FAILURE); }
-#define PAGE_SZ 4096
-
 
 
 void cf_prepare_next(void)
@@ -164,7 +173,7 @@ void cf_prepare_next(void)
 
 void cf_init_target(void)
 {
-    // 1) ban all external randomness
+    // ban all external randomness
     RAND_set_rand_method(&rand_meth);
 
     // Allocate and initialize necessary data structures
@@ -179,38 +188,124 @@ void cf_init_target(void)
     if (!EC_KEY_set_group(eckey,ecgroup))
         printf("error setting group\n");
 
-    // 6) generate the peer’s key for this round
+    // generate the peer’s key for this round
     cf_prepare_next();
 }
 
-void cf_run_target(bool dumpResult)
+void cf_run_target(void)
 {
 
-    secret_handed = false;
+    BIGNUM *kinv_plain   = NULL;
+    BIGNUM *kinv_guarded = NULL;
+    BIGNUM *rp           = NULL;
+
+    /* slot 0: long-term EC private scalar */
+    next_slot = 0;
+    hook_remaining = 1;
     hook_enabled = true;
-    if (!EC_KEY_oct2priv(eckey, secret, sizeof(key)))
+
+    if (!EC_KEY_oct2priv(eckey, (const unsigned char *)secret, sizeof(key))) {
+        hook_enabled = false;
+        hook_remaining = 0;
         printf("oct2priv error\n");
+        return;
+    }
+
     hook_enabled = false;
-    
+    hook_remaining = 0;
+
+    /* get ephemeral signing material */
+    if (!ECDSA_sign_setup(eckey, NULL, &kinv_plain, &rp)) {
+        printf("ECDSA_sign_setup error\n");
+        return;
+    }
+
+    if (kinv_plain == NULL || rp == NULL) {
+        printf("ECDSA_sign_setup returned NULL\n");
+        BN_clear_free(kinv_plain);
+        BN_clear_free(rp);
+        return;
+    }
+
+    int kinv_len = BN_num_bytes(kinv_plain);
+    if (kinv_len <= 0 || kinv_len > SLOT_SIZE) {
+        printf("unexpected kinv size: %d\n", kinv_len);
+        BN_clear_free(kinv_plain);
+        BN_clear_free(rp);
+        return;
+    }
+
+    unsigned char *kinv_buf = OPENSSL_malloc((size_t)kinv_len);
+    if (kinv_buf == NULL) {
+        perror("OPENSSL_malloc(kinv_buf)");
+        BN_clear_free(kinv_plain);
+        BN_clear_free(rp);
+        return;
+    }
+
+    if (BN_bn2binpad(kinv_plain, kinv_buf, kinv_len) != kinv_len) {
+        printf("BN_bn2binpad error\n");
+        OPENSSL_clear_free(kinv_buf, (size_t)kinv_len);
+        BN_clear_free(kinv_plain);
+        BN_clear_free(rp);
+        return;
+    }
+
+    BN_clear_free(kinv_plain);
+    kinv_plain = NULL;
+
+    /* slot 1: guarded kinv */
+    hook_remaining = 1;
+    hook_enabled = true;
+
+    kinv_guarded = BN_bin2bn(kinv_buf, kinv_len, NULL);
+
+    hook_enabled = false;
+    hook_remaining = 0;
+
+    OPENSSL_clear_free(kinv_buf, (size_t)kinv_len);
+
+    if (kinv_guarded == NULL) {
+        printf("BN_bin2bn(kinv_guarded) error\n");
+        BN_clear_free(rp);
+        return;
+    }
+
     int sigLen = ECDSA_size(eckey);
     unsigned char *sig = OPENSSL_malloc(sigLen);
-    if(!ECDSA_sign(0, m, sizeof(m), sig, &sigLen, eckey))
+    if (sig == NULL) {
+        perror("OPENSSL_malloc(sig)");
+        BN_clear_free(kinv_guarded);
+        BN_clear_free(rp);
+        return;
+    }
+
+    if (!ECDSA_sign_ex(0, m, sizeof(m), sig, &sigLen, kinv_guarded, rp, eckey))
         printf("signature error\n");
 
     OPENSSL_free(sig);
+    BN_clear_free(kinv_guarded);
+    BN_clear_free(rp);
 }
-
 
 static void *secure_malloc(size_t sz,
                            const char *file, int line)
 {
     (void)file; (void)line;
 
-    /* Give the protected page exactly once per round */
-    if (hook_enabled && !secret_handed && sz == sizeof(key)) {
-        secret_handed = true;
-        return secret;
+    if (hook_enabled && hook_remaining > 0 && sz >= sizeof(key) && sz <= SLOT_SIZE) {
+
+        if ((next_slot + 1) * SLOT_SIZE > PAGE_SZ) {
+            fprintf(stderr, "[victim] out of guarded slots\n");
+            abort();
+        }
+
+        void *p = secret + (next_slot * SLOT_SIZE);
+        next_slot++;
+        hook_remaining--;
+        return p;
     }
+
     return malloc(sz);
 }
 
@@ -219,10 +314,14 @@ static void *secure_realloc(void *ptr, size_t sz,
 {
     (void)file; (void)line;
 
-    /* OpenSSL never needs to grow the private‑key buffer;
-       if it tries, refuse to move it. */
-    if (ptr == secret)
-        return secret;
+    if (in_secret(ptr)) {
+        if (sz > SLOT_SIZE) {
+            fprintf(stderr, "[victim] secure_realloc refused growth of guarded slot: %zu bytes\n", sz);
+            abort();
+        }
+        return ptr;
+    }
+
     return realloc(ptr, sz);
 }
 
@@ -231,10 +330,10 @@ static void secure_free(void *ptr,
 {
     (void)file; (void)line;
 
-    if (ptr == secret) {           /* keep PKU page alive */
-        secret_handed = false;     /* ready for next round */
+    if (in_secret(ptr)) {
         return;
     }
+
     free(ptr);
 }
 
@@ -243,6 +342,7 @@ void __attribute__((optimize("O0"))) foo()
     void *a = malloc(4);
     free(a);
 }
+
 
 int main(int argc, char *argv[])
 {
@@ -258,11 +358,8 @@ int main(int argc, char *argv[])
     clock_gettime(CLOCK, &t0);
     foo();
 
-    int n = 10000;
+    int n = 1000;
     printf("Running %d rounds\n", n);
-
-    bool perf = (argc >= 3 && strcmp(argv[2], "perf") == 0);
-    // if (perf) printf("Performance mode\n");
 
     if (argc >= 2) {
         int mode = atoi(argv[1]);
@@ -274,7 +371,6 @@ int main(int argc, char *argv[])
                   MAP_ANONYMOUS|MAP_PRIVATE,
                   -1, 0);
     if (secret == MAP_FAILED) die("mmap(secret)");
-    // copy the 32-byte private key into that new page
     memcpy(secret, key, sizeof(key));
 
     cf_init_target();
@@ -287,20 +383,19 @@ int main(int argc, char *argv[])
     if (disable_secret) {
         printf("[victim] guarding key\n");
         if (install_guard) {
-            install_guard(secret, PAGE_SZ);
+            install_guard(secret, sizeof(key));
         } else {
             fprintf(stderr, "[victim] install_guard not found (run with LD_PRELOAD?)\n");
         }
     }
 
-    cf_run_target(!perf || n==0);
+    cf_run_target();
     cf_prepare_next();
     clock_gettime(CLOCK, &t1);
 
     while (n-->0) {
-        cf_run_target(!perf || n==0);
+        cf_run_target();
         cf_prepare_next();
-        // nanosleep(&(struct timespec){.tv_sec=0,.tv_nsec=20000000}, NULL);
     }
 
     clock_gettime(CLOCK, &t2);

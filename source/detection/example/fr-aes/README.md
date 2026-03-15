@@ -12,7 +12,11 @@ This example requires a self-compiled version of OpenSSL to enable its T-Table-b
 wget https://www.openssl.org/source/openssl-1.1.0f.tar.gz
 tar -xvf openssl-1.1.0f.tar.gz
 cd openssl-1.1.0f
+# Fix Perl compatibility in all files
+grep -rl "qw/glob/" . | xargs sed -i 's|qw/glob/|qw/:globally/|g'
+# Configure
 ./config -d shared no-asm no-hw --prefix=/usr/local/ssl_vuln
+# Build and Install
 sudo make
 sudo make install_sw
 ```

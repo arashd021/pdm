@@ -12,12 +12,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <time.h>
 #include <sys/mman.h>
 #include <stdint.h>
+#include <inttypes.h>
 #define CLOCK CLOCK_MONOTONIC
 #include <openssl/crypto.h>
 
@@ -116,14 +116,6 @@ static const uint8_t secret_mask[32] __attribute__((aligned(32))) = {
 };
 
 
-
-static void hexdump(const char *lbl, const uint8_t *b, size_t n)
-{
-    printf("%s:", lbl);
-    for (size_t i = 0; i < n; i++)  printf(" %02x", b[i]);
-    putchar('\n');
-}
-
 void cf_prepare_next(void)
 {
     if (theirKey) EVP_PKEY_free(theirKey);
@@ -132,7 +124,7 @@ void cf_prepare_next(void)
     EVP_PKEY_keygen_init(pctx);
     theirKey = NULL;
     if (!EVP_PKEY_keygen(pctx, &theirKey))
-        printf("their keygen error\n");
+        printf("keygen error\n");
 }
 
 
@@ -141,34 +133,49 @@ void cf_init_target(void)
     // 1) ban all external randomness
     RAND_set_rand_method(&rand_meth);
 
-    // 6) generate the peer’s key for this round
+    // 2) generate the peer’s key for this round
     cf_prepare_next();
 }
 
-void cf_run_target(bool dumpResult)
+void cf_run_target(void)
 {
     hook_enabled = true;
     secret_handed = false;
+
     EVP_PKEY *ourKey = EVP_PKEY_new_raw_private_key(
                           EVP_PKEY_X25519,
                           NULL,
-                          secret,
+                          (const unsigned char *)secret,
                           sizeof(ecdhOurD));
+
     hook_enabled = false;
-    if (!ourKey) printf("our key alloc error\n");
+
+    if (!ourKey) {
+        printf("our key alloc error\n");
+        return;
+    }
 
     EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new(ourKey, NULL);
-    EVP_PKEY_derive_init(pctx);
-    EVP_PKEY_derive_set_peer(pctx, theirKey);
+    if (!pctx) {
+        printf("pctx alloc error\n");
+        EVP_PKEY_free(ourKey);
+        return;
+    }
+
+    if (!EVP_PKEY_derive_init(pctx))
+        printf("derive init error\n");
+
+    if (!EVP_PKEY_derive_set_peer(pctx, theirKey))
+        printf("set peer error\n");
 
     size_t len = 32;
-    unsigned char *secret_out = OPENSSL_malloc(len);
+    unsigned char secret_out[32];
+
     if (!EVP_PKEY_derive(pctx, secret_out, &len))
         printf("dh error\n");
-    
-    // hexdump("shared secret", secret_out, len);
 
-    OPENSSL_free(secret_out);
+    OPENSSL_cleanse(secret_out, sizeof(secret_out));
+
     EVP_PKEY_free(ourKey);
     EVP_PKEY_CTX_free(pctx);
 }
@@ -177,17 +184,19 @@ void cf_run_target(bool dumpResult)
 
 static bool secret_in_use = false;          /* 0 = free, 1 = handed out */
 /* ------------------------------------------------------------------ */
+
 static void *secure_malloc(size_t sz,
                            const char *file, int line)
 {
     (void)file; (void)line;
 
-    /* Give the protected page **once**, when the scalar is duplicated */
-    if (hook_enabled && !secret_handed && sz == sizeof(ecdhOurD)) {
+    if (hook_enabled && !secret_handed && sz >= sizeof(ecdhOurD)) {
+    // if (hook_enabled && !secret_handed && sz == sizeof(ecdhOurD)) {
+        secret_handed = true;
         secret_in_use = true;
-        return secret;                      /* guarded page */
+        return secret;
     }
-    return malloc(sz);                      /* everything else */
+    return malloc(sz);
 }
 
 static void *secure_realloc(void *ptr,
@@ -196,8 +205,21 @@ static void *secure_realloc(void *ptr,
 {
     (void)file; (void)line;
 
-    /* OpenSSL never reallocs the scalar; fall back */
-    return (ptr == secret) ? secret : realloc(ptr, sz);
+    /*
+     * If OpenSSL ever tries to realloc the guarded scalar object, keep the
+     * guarded page only if the requested size still fits inside it.
+     */
+    if (ptr == secret) {
+        if (sz > PAGE_SZ) {
+            fprintf(stderr,
+                    "[victim] secure_realloc refused growth of guarded X25519 scalar: %zu bytes\n",
+                    sz);
+            abort();
+        }
+        return secret;
+    }
+
+    return realloc(ptr, sz);
 }
 
 static void secure_free(void *ptr,
@@ -205,8 +227,9 @@ static void secure_free(void *ptr,
 {
     (void)file; (void)line;
 
-    if (ptr == secret) {                    /* don’t un‑map the page */
-        secret_in_use = false;              /* ready for next round  */
+    if (ptr == secret) {                    /* don't unmap the guarded page */
+        secret_in_use = false;
+        secret_handed = false;              /* ready for the next round */
         return;
     }
     free(ptr);
@@ -234,11 +257,9 @@ int main(int argc, char *argv[])
     clock_gettime(CLOCK, &t0);
     foo();
 
-    int n = 10000;
+    int n = 1000;
     printf("Running %d rounds\n", n);
 
-    bool perf = (argc >= 3 && strcmp(argv[2], "perf") == 0);
-    // if (perf) printf("Performance mode\n");
 
     if (argc >= 2) {
         int mode = atoi(argv[1]);
@@ -263,22 +284,22 @@ int main(int argc, char *argv[])
     if (disable_secret) {
         printf("[victim] guarding key\n");
         if (install_guard) {
-            install_guard(secret, PAGE_SZ);
+            install_guard(secret, sizeof(ecdhOurD));
         } else {
             fprintf(stderr, "[victim] install_guard not found (run with LD_PRELOAD?)\n");
         }
 
     }
 
-    cf_run_target(!perf || n==0);
+    cf_run_target();
     cf_prepare_next();
     clock_gettime(CLOCK, &t1);
 
     while (n-->0) {
         
-        cf_run_target(!perf || n==0);
+        cf_run_target();
         cf_prepare_next();
-        // nanosleep(&(struct timespec){.tv_sec=0,.tv_nsec=20000000}, NULL);
+
     }
 
     clock_gettime(CLOCK, &t2);

@@ -12,8 +12,9 @@
 #include <stdbool.h>
 #include <time.h>
 #include <sys/mman.h>
-#include <stdint.h>
+#include <inttypes.h>
 #define CLOCK CLOCK_MONOTONIC
+#define PAGE_SZ 4096
 
 __attribute__((weak)) void install_guard(void *addr, size_t len);
 bool disable_secret = true;
@@ -25,13 +26,13 @@ static void die(const char *msg) { perror(msg); exit(EXIT_FAILURE); }
 unsigned char key[32] = { 0 };          /* 256-bit zero key */
 unsigned char iv [16] = { 0 };          /* 128-bit zero nonce */
 
-/* message (same 16 bytes you posted) */
+/* message */
 unsigned char m[16] = {
     0x0c, 0xb8, 0x64, 0x56, 0xa7, 0x3a, 0x55, 0xd1,
     0x90, 0x1b, 0xbd, 0x0b, 0x4c, 0xff, 0x13, 0x6d
 };
 
-static Aes *aesCtx;                     /* will live in mmap */
+static Aes *aesCtx;
 
 static void dump(const char *lbl, const uint8_t *p, size_t n)
 {
@@ -40,47 +41,62 @@ static void dump(const char *lbl, const uint8_t *p, size_t n)
     puts("");
 }
 
-static void print_hex(const char *lbl, const uint8_t *p, size_t n)
-{
-    printf("%s:", lbl);
-    for(size_t i=0; i<n; i++)  printf(" %02x", p[i]);
-    putchar('\n');
-}
-
 void cf_init_target(void)
 {
-    /* Initialise the AES context and load the key before we guard it */
-    wc_AesInit(aesCtx, NULL, INVALID_DEVID);
-    wc_AesGcmSetKey(aesCtx, key, sizeof(key));
+    int ret;
+
+    ret = wc_AesInit(aesCtx, NULL, INVALID_DEVID);
+    if (ret != 0) {
+        fprintf(stderr, "wc_AesInit failed: %d\n", ret);
+        exit(EXIT_FAILURE);
+    }
+
+    ret = wc_AesGcmSetKey(aesCtx, key, sizeof(key));
+    if (ret != 0) {
+        fprintf(stderr, "wc_AesGcmSetKey failed: %d\n", ret);
+        exit(EXIT_FAILURE);
+    }
 }
 
-void cf_run_target(bool dumpResult)
+void cf_run_target(void)
 {
-                     
+    //AES
     unsigned char *cipher = malloc(sizeof(m));
-    unsigned char *tag    = malloc(16);
-    uint8_t pt2[sizeof(m)];
+    unsigned char *tag = malloc(16);
 
-    if (wc_AesGcmEncrypt(aesCtx,cipher, m, sizeof(m), iv, sizeof(iv), tag, 16, NULL, 0) != 0) { fprintf(stderr, "Encrypt error\n"); return; }
+    if (!cipher) die("malloc cipher");
+    if (!tag) die("malloc tag");
 
-    // print_hex("ciphertext", cipher, sizeof(m));
-    // print_hex("tag       ", tag, sizeof(tag));
-
-    if ((wc_AesGcmDecrypt(aesCtx, pt2, cipher, sizeof(m), iv, sizeof(iv), tag, 16, NULL, 0)) != 0) { fprintf(stderr, "Decrypt error\n"); return; }
-
-    // print_hex("decrypted", pt2, sizeof(m));
-
-    // 4) verify
-    if (memcmp(m, pt2, sizeof(m)) != 0) {
-        // fprintf(stderr, "FAIL: decrypted != original\n");
-        // print_hex("got      ", pt2, sizeof(pt2));
-    }
-    else {
-        // puts("OK: AES-GCM encrypt/decrypt round-trip verified");
-    }
+    wc_AesGcmEncrypt(aesCtx, cipher, m, sizeof(m), iv, sizeof(iv), tag, 16, NULL, 0);
 
     free(cipher);
     free(tag);
+
+    // Multi-round
+    // int pLen = 16 * 1000;
+    // unsigned char *p = malloc(pLen);
+    // unsigned char *cipher = malloc(pLen);
+    // unsigned char *tag = malloc(16);
+
+    // if (!p) die("malloc p");
+    // if (!cipher) die("malloc cipher");
+    // if (!tag) die("malloc tag");
+
+    // for(int i = 0; i < pLen; i += 16)
+    //     memcpy(p + i, m, 16);
+
+    // int ret = wc_AesGcmEncrypt(aesCtx, cipher, p, pLen, iv, sizeof(iv), tag, 16, NULL, 0);
+    // if (ret != 0) {
+    //     fprintf(stderr, "wc_AesGcmEncrypt failed: %d\n", ret);
+    //     free(p);
+    //     free(cipher);
+    //     free(tag);
+    //     exit(EXIT_FAILURE);
+    // }
+
+    // free(cipher);
+    // free(tag);
+    // free(p);
 }
 
 void cf_prepare_next(void)
@@ -96,13 +112,17 @@ void cf_prepare_next(void)
 }
 
 
-
 void __attribute__((optimize("O0"))) foo()
 {
     void *a = malloc(4);
     free(a);
 }
 
+static inline double now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+}
 
 int main(int argc, char *argv[])
 {   
@@ -143,20 +163,16 @@ int main(int argc, char *argv[])
         }
     }
 
-    int n = 10000;
+    int n = 1000;
     printf("Running %d rounds\n", n);
-
-    bool perf = (argc >= 3 && strcmp(argv[2], "perf") == 0);
-    // if (perf) printf("Performance mode\n");
     
-
-    cf_run_target(!perf || n==0);
+    cf_run_target();
     cf_prepare_next();
     
     clock_gettime(CLOCK, &t1);
 
     while (n-->0) {
-        cf_run_target(!perf || n==0);
+        cf_run_target();
         cf_prepare_next();
     }
 
