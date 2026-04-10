@@ -716,6 +716,11 @@ static uint8_t *emit_store_to_shadow(uint8_t *p,
                                      size_t width,
                                      uint64_t dst_abs);
 
+static inline int vec_reg_id_for_width(x86_reg reg, size_t vec_width);
+static inline uint8_t *emit_vpxor_vec_r10(uint8_t *p,
+                                          int vec_reg,
+                                          size_t vec_width);
+
 static uint8_t *emit_relocated_rip_relative_insn(uint8_t *t, const cs_insn *ins)
 {
     const cs_x86 *x = &ins->detail->x86;
@@ -801,9 +806,9 @@ static uint8_t *emit_relocated_rip_relative_insn(uint8_t *t, const cs_insn *ins)
         const cs_x86_op *dst = &x->operands[0];
 
         /* ---------- vector load fallback ---------- */
-        if ((dst->reg >= X86_REG_XMM0 && dst->reg <= X86_REG_XMM15) ||
-            (dst->reg >= X86_REG_YMM0 && dst->reg <= X86_REG_YMM15)) {
-            size_t width = (dst->reg >= X86_REG_YMM0 && dst->reg <= X86_REG_YMM15) ? 32 : 16;
+        if (vec_reg_id_for_width(dst->reg, 16) >= 0 ||
+            vec_reg_id_for_width(dst->reg, 32) >= 0) {
+            size_t width = (vec_reg_id_for_width(dst->reg, 32) >= 0) ? 32 : 16;
 
             /* preserve architectural RDI: emit_load_from_shadow() uses RDI as base */
             *t++ = 0x57;                    /* push rdi */
@@ -860,9 +865,9 @@ static uint8_t *emit_relocated_rip_relative_insn(uint8_t *t, const cs_insn *ins)
         const cs_x86_op *src = &x->operands[1];
 
         /* vector store fallback */
-        if ((src->reg >= X86_REG_XMM0 && src->reg <= X86_REG_XMM15) ||
-            (src->reg >= X86_REG_YMM0 && src->reg <= X86_REG_YMM15)) {
-            size_t width = (src->reg >= X86_REG_YMM0 && src->reg <= X86_REG_YMM15) ? 32 : 16;
+        if (vec_reg_id_for_width(src->reg, 16) >= 0 ||
+            vec_reg_id_for_width(src->reg, 32) >= 0) {
+            size_t width = (vec_reg_id_for_width(src->reg, 32) >= 0) ? 32 : 16;
 
             /* preserve architectural RDI: emit_store_to_shadow() uses RDI as base */
             *t++ = 0x57;                    /* push rdi */
@@ -1367,20 +1372,12 @@ static inline uint8_t *emit_xor_with_mask(uint8_t *p,
         *p++ = 0x4D; *p++ = 0x8D; *p++ = 0x93;           /* lea r10,[r11+disp32] */
         int32_t d32 = (int32_t)MASK_DELTA;  memcpy(p,&d32,4);  p += 4;
 
-        /* ---- build 3‑byte VEX, VPXOR dst,dst,[r10] ---- */
-        int dst_id = (dst->reg >= X86_REG_YMM0)
-                     ? dst->reg - X86_REG_YMM0
-                     : dst->reg - X86_REG_XMM0;
-        int is_ymm = (is_vector==2);
+        int dst_id = vec_reg_id_for_width(dst->reg, width);
+        if (dst_id < 0)
+            ABORT("emit_xor_with_mask vector: bad dst reg %d for width %zu",
+                  dst->reg, width);
 
-        uint8_t vex2 = 0x41;                           /* X'=1, B'=0, m=00001 */
-        vex2 |= ((dst_id & 8) ? 0 : 0x80);             /* R'                */
-        uint8_t vex3 = ((~dst_id & 0xF) << 3)          /* vvvv              */
-                       | (is_ymm ? 0x04 : 0)           /* L                 */
-                       | 0x01;                         /* pp=66             */
-        *p++ = 0xC4; *p++ = vex2; *p++ = vex3;
-        *p++ = 0xEF;                                   /* VPXOR opcode      */
-        *p++ = 0x02 | ((dst_id & 7)<<3);               /* rm=r10            */
+        p = emit_vpxor_vec_r10(p, dst_id, width);
 
         /* ---- patch the two skip‑targets to jump here ---- */
         {
@@ -1490,13 +1487,30 @@ return p;
 }
 
 
+static inline int vec_reg_id_for_width(x86_reg reg, size_t vec_width)
+{
+    if (vec_width == 32) {
+        if (reg >= X86_REG_YMM0 && reg <= X86_REG_YMM31)
+            return reg - X86_REG_YMM0;
+        return -1;
+    }
+
+    if (vec_width == 16) {
+        if (reg >= X86_REG_XMM0 && reg <= X86_REG_XMM31)
+            return reg - X86_REG_XMM0;
+        return -1;
+    }
+
+    return -1;
+}
+
 /* Spill/load one XMM/YMM register to/from [rsp + disp32] using VMOVDQU. */
 /* vec_width = 16 for XMM, 32 for YMM.                                 */
 /* load = 0 => store reg -> [rsp+disp]                                 */
 /* load = 1 => load  [rsp+disp] -> reg                                 */
 static inline uint8_t *emit_vmovdqu_vec_rsp_disp32(uint8_t *p,
                                                    int load,        /* 0=store, 1=load */
-                                                   int vec_reg,     /* 0..15 */
+                                                   int vec_reg,     /* 0..31 */
                                                    size_t vec_width,/* 16 or 32 */
                                                    int32_t disp)
 {
@@ -1504,23 +1518,114 @@ static inline uint8_t *emit_vmovdqu_vec_rsp_disp32(uint8_t *p,
     if (vec_width != 16 && vec_width != 32)
         ABORT("emit_vmovdqu_vec_rsp_disp32: bad vec_width %zu", vec_width);
 
-    *p++ = 0xC5;
-    uint8_t vex2;
-    if (is_ymm) {
-        vex2 = (vec_reg & 8) ? 0x7E : 0xFE;   /* old working encoding pattern */
-    } else {
-        vex2 = (vec_reg & 8) ? 0x7A : 0xFA;
+    if (vec_reg < 0 || vec_reg > 31)
+        ABORT("emit_vmovdqu_vec_rsp_disp32: bad vec_reg %d", vec_reg);
+
+    if (vec_reg <= 15) {
+        *p++ = 0xC5;
+        uint8_t vex2;
+        if (is_ymm) {
+            vex2 = (vec_reg & 8) ? 0x7E : 0xFE;
+        } else {
+            vex2 = (vec_reg & 8) ? 0x7A : 0xFA;
+        }
+        *p++ = vex2;
+
+        *p++ = load ? 0x6F : 0x7F;
+        *p++ = (uint8_t)(0x80 | ((vec_reg & 7) << 3) | 0x04);
+        *p++ = 0x24;
+
+        memcpy(p, &disp, 4);
+        p += 4;
+        return p;
     }
-    *p++ = vex2;
 
-    *p++ = load ? 0x6F : 0x7F;                /* vmovdqu reg,mem / mem,reg */
-
-    /* ModRM: mod=10 (disp32), reg=vec_reg&7, r/m=100 (SIB follows) */
+    *p++ = 0x62;
+    {
+        uint8_t evex_p0 = 0xE1;
+        if (vec_reg & 8) evex_p0 &= 0x7F;
+        *p++ = evex_p0;
+    }
+    *p++ = 0xFE;
+    *p++ = is_ymm ? 0x28 : 0x08;
+    *p++ = load ? 0x6F : 0x7F;                /* vmovdqu64 reg,mem / mem,reg */
     *p++ = (uint8_t)(0x80 | ((vec_reg & 7) << 3) | 0x04);
-    *p++ = 0x24;                              /* SIB: [rsp] */
+    *p++ = 0x24;
 
     memcpy(p, &disp, 4);
     p += 4;
+    return p;
+}
+
+static inline uint8_t *emit_vmovdqu_vec_rdi(uint8_t *p,
+                                            int load,
+                                            int vec_reg,
+                                            size_t vec_width)
+{
+    int is_ymm = (vec_width == 32);
+    if (vec_width != 16 && vec_width != 32)
+        ABORT("emit_vmovdqu_vec_rdi: bad vec_width %zu", vec_width);
+    if (vec_reg < 0 || vec_reg > 31)
+        ABORT("emit_vmovdqu_vec_rdi: bad vec_reg %d", vec_reg);
+
+    if (vec_reg <= 15) {
+        *p++ = 0xC5;
+        {
+            uint8_t vex2 = is_ymm ? 0xFE : 0xFA;
+            if (vec_reg & 8) vex2 &= 0x7F;
+            *p++ = vex2;
+        }
+
+        *p++ = load ? 0x6F : 0x7F;
+        *p++ = (uint8_t)(((vec_reg & 7) << 3) | 0x07);
+        return p;
+    }
+
+    *p++ = 0x62;
+    {
+        uint8_t evex_p0 = 0xE1;
+        if (vec_reg & 8) evex_p0 &= 0x7F;
+        *p++ = evex_p0;
+    }
+    *p++ = 0xFE;
+    *p++ = is_ymm ? 0x28 : 0x08;
+    *p++ = load ? 0x6F : 0x7F;
+    *p++ = (uint8_t)(((vec_reg & 7) << 3) | 0x07);
+    return p;
+}
+
+static inline uint8_t *emit_vpxor_vec_r10(uint8_t *p,
+                                          int vec_reg,
+                                          size_t vec_width)
+{
+    int is_ymm = (vec_width == 32);
+    if (vec_width != 16 && vec_width != 32)
+        ABORT("emit_vpxor_vec_r10: bad vec_width %zu", vec_width);
+    if (vec_reg < 0 || vec_reg > 31)
+        ABORT("emit_vpxor_vec_r10: bad vec_reg %d", vec_reg);
+
+    if (vec_reg <= 15) {
+        uint8_t vex2 = 0x41;
+        vex2 |= ((vec_reg & 8) ? 0 : 0x80);
+        uint8_t vex3 = ((~vec_reg & 0xF) << 3)
+                       | (is_ymm ? 0x04 : 0)
+                       | 0x01;
+        *p++ = 0xC4; *p++ = vex2; *p++ = vex3;
+        *p++ = 0xEF;
+        *p++ = (uint8_t)(0x02 | ((vec_reg & 7) << 3));
+        return p;
+    }
+
+    *p++ = 0x62;
+    {
+        uint8_t evex_p0 = 0xC1;
+        if (vec_reg & 8) evex_p0 &= 0x7F;
+        *p++ = evex_p0;
+    }
+    *p++ = (uint8_t)(((~vec_reg & 0xF) << 3) | 0x05);
+    *p++ = is_ymm ? 0x20 : 0x00;
+    *p++ = 0xEF;
+    *p++ = (uint8_t)(0x02 | ((vec_reg & 7) << 3));
     return p;
 }
 
@@ -1687,8 +1792,8 @@ static uint8_t *emit_load_from_shadow(uint8_t       *p,
 
 
     /* ----------------  Vectorized Load  ---------------- */
-    if ((dst->reg >= X86_REG_YMM0 && dst->reg <= X86_REG_YMM15) ||
-        (dst->reg >= X86_REG_XMM0 && dst->reg <= X86_REG_XMM15)){
+    if (vec_reg_id_for_width(dst->reg, width) >= 0) {
+        int dst_id = vec_reg_id_for_width(dst->reg, width);
 
         /* movabs rdi, imm64  (shadow address in RDI) */
         if (src_abs == 0) {
@@ -1700,25 +1805,7 @@ static uint8_t *emit_load_from_shadow(uint8_t       *p,
                 memcpy(p, &src_abs, 8);  p += 8;
         }
 
-        /* ---- Build 2-byte VEX correctly ------------------------- */
-        int  dst_id = (dst->reg >= X86_REG_YMM0 ?
-                       dst->reg - X86_REG_YMM0 :
-                       dst->reg - X86_REG_XMM0);            /* 0-15 */
-        int  is_ymm = (dst->reg >= X86_REG_YMM0);
-
-        *p++ = 0xC5;                            /* VEX prefix */
-        uint8_t vex2 = is_ymm ? 0xFE /* L=1 */ : 0xFA /* L=0 */;
-        /* clear R **only** when dst_id≥8 (high bit = 1) */
-        if (dst_id & 8)  vex2 &= 0x7F;          /* R=0 for regs 8-15 */
-        *p++ = vex2;
-
-        /* vmovdqu opcode */
-        *p++ = 0x6F;
-
-
-        /* ModRM: 00 | (reg=dst_id&7)<<3 | rm=7 (rdi) */
-        *p++ = (uint8_t)(0x00 | ((dst_id & 7) << 3) | 0x07);
-
+        p = emit_vmovdqu_vec_rdi(p, 1 /* load */, dst_id, width);
         return p;                 /* done – skip scalar logic */
     }
 
@@ -1936,18 +2023,11 @@ static uint8_t *emit_store_to_shadow(uint8_t *p,
     /* ----- emit the width-specific store ----- */
 have_ptr_in_r11:
     if (width == 32 || width == 16) {
-        int  src_id = (width==32 ?
-                       src->reg - X86_REG_YMM0 :
-                       src->reg - X86_REG_XMM0);
-        int  is_ymm = (width == 32);
-
-        *p++ = 0xC5;
-        uint8_t vex2 = is_ymm ? 0xFE : 0xFA;
-        if (src_id & 8)  vex2 &= 0x7F;           /* clear R only for 8-15 */
-        *p++ = vex2;
-
-        *p++ = 0x7F;                              /* vmovdqu store */
-        *p++ = (uint8_t)( ((src_id & 7) << 3) | 0x07 );
+        int src_id = vec_reg_id_for_width(src->reg, width);
+        if (src_id < 0)
+            ABORT("emit_store_to_shadow: bad vector src reg %d for width %zu",
+                  src->reg, width);
+        p = emit_vmovdqu_vec_rdi(p, 0 /* store */, src_id, width);
     } else {
         uint8_t id = rm_id(src);          /* scalar: need GPR id   */
         if (id == (uint8_t)-1)
@@ -2023,16 +2103,10 @@ static inline uint8_t *emit_store_vector_preserve_src(uint8_t *p,
 
     /* spill source to stack */
     {
-        int src_id;
-        if (width == 32) {
-            if (src->reg < X86_REG_YMM0 || src->reg > X86_REG_YMM15)
-                ABORT("emit_store_vector_preserve_src: expected YMM src");
-            src_id = src->reg - X86_REG_YMM0;
-        } else {
-            if (src->reg < X86_REG_XMM0 || src->reg > X86_REG_XMM15)
-                ABORT("emit_store_vector_preserve_src: expected XMM src");
-            src_id = src->reg - X86_REG_XMM0;
-        }
+        int src_id = vec_reg_id_for_width(src->reg, width);
+        if (src_id < 0)
+            ABORT("emit_store_vector_preserve_src: bad vector src reg %d for width %zu",
+                  src->reg, width);
         p = emit_vmovdqu_vec_rsp_disp32(p, 0 /* store */, src_id, width, 0x20);
     }
 
@@ -4395,7 +4469,9 @@ resume_tail_reemit:
                 t = emit_movq_xmm_from_r10(t, op0);
             }
             else if ((tmp[0].id == X86_INS_VMOVDQA ||
-                    tmp[0].id == X86_INS_VMOVDQU) &&
+                    tmp[0].id == X86_INS_VMOVDQU ||
+                    tmp[0].id == X86_INS_VMOVDQU32 ||
+                    tmp[0].id == X86_INS_VMOVDQU64) &&
                     op0->type == X86_OP_MEM &&
                     op1 && op1->type == X86_OP_REG) {
                 t = emit_recompute_shadow_r11(t, mop, tmp[0].address, tmp[0].size);
@@ -4404,7 +4480,9 @@ resume_tail_reemit:
                 t = emit_store_vector_preserve_src(t, op1, op0->size, 0);
             }
             else if ((tmp[0].id == X86_INS_VMOVDQA ||
-                      tmp[0].id == X86_INS_VMOVDQU) &&
+                      tmp[0].id == X86_INS_VMOVDQU ||
+                      tmp[0].id == X86_INS_VMOVDQU32 ||
+                      tmp[0].id == X86_INS_VMOVDQU64) &&
                      op0->type == X86_OP_REG &&
                      op1 && op1->type == X86_OP_MEM) {
                 t = emit_lea_r11(t, mop, tmp[0].address, tmp[0].size);
