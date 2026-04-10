@@ -20,7 +20,7 @@ make
 ./calibration
 ```
 
-In `constants.h`, replace
+The calibration tool automatically updates the threshold values in `constants.h`:
 
 ```
 /* ---------------- Cache timing thresholds (cycles) ---------------- */
