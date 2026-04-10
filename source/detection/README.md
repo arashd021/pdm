@@ -29,7 +29,10 @@ In `constants.h`, replace
 #define THR_MISS 1000
 ```
 
-with the correct thresholds for your system, as given by ./calibration.
+with the correct thresholds for your system, as given by ./calibration. These thresholds
+are measured using the same `rdtsc(); maccess(addr); rdtsc() - start` timing path used
+inside `PDM-detection.c`, so the printed values already include `rdtsc` measurement
+overhead and can be copied directly into `constants.h`.
 
 
 ### Build

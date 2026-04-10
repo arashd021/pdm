@@ -5,14 +5,16 @@
 
 /* ---------------- Address selection Mode---------------- */
 // Uncomment exactly ONE:
-// #define USE_FIXED_START_ADDR
-#define USE_PROC_MAPS
+#define USE_FIXED_START_ADDR
+// #define USE_PROC_MAPS
 
 /* ---------------- Fixed Address + Size---------------- */
-#define START_ADDR 0x7ffff6fdf000
+#define START_ADDR 0x7ffff71df000
 #define SIZE 3072
 
 /* ---------------- Cache timing thresholds (cycles) ---------------- */
-#define THR_L1   500
-#define THR_L3   700
-#define THR_MISS 1000
+/* Measured as delta = rdtsc(); maccess(addr); rdtsc() - delta. */
+/* These values include rdtsc measurement overhead. */
+#define THR_L1   125
+#define THR_L3   300
+#define THR_MISS 600
