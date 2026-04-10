@@ -15,6 +15,6 @@
 /* ---------------- Cache timing thresholds (cycles) ---------------- */
 /* Measured as delta = rdtsc(); maccess(addr); rdtsc() - delta. */
 /* These values include rdtsc measurement overhead. */
-#define THR_L1   125
+#define THR_L1   150
 #define THR_L3   300
-#define THR_MISS 600
+#define THR_MISS 700

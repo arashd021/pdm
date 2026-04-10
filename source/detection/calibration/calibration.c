@@ -1,8 +1,10 @@
 #define _GNU_SOURCE
+#include <limits.h>
 #include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #define MAX(X,Y) (((X) > (Y)) ? (X) : (Y))
 #define MIN(X,Y) (((X) < (Y)) ? (X) : (Y))
@@ -144,6 +146,79 @@ static size_t round_up_to(size_t value, size_t quantum)
   return ((value + quantum - 1) / quantum) * quantum;
 }
 
+static int build_constants_path(char *path, size_t path_sz)
+{
+  char exe_path[PATH_MAX];
+  ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+  if (n < 0 || (size_t)n >= sizeof(exe_path))
+    return -1;
+
+  exe_path[n] = '\0';
+
+  char *slash = strrchr(exe_path, '/');
+  if (!slash)
+    return -1;
+  *slash = '\0';
+
+  if (snprintf(path, path_sz, "%s/../constants.h", exe_path) >= (int)path_sz)
+    return -1;
+
+  return 0;
+}
+
+static int write_updated_constants(const char *constants_path,
+                                   size_t t_l1,
+                                   size_t t_l3,
+                                   size_t t_miss)
+{
+  char tmp_path[PATH_MAX];
+  FILE *in = fopen(constants_path, "r");
+  if (!in)
+    return -1;
+
+  if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", constants_path) >= (int)sizeof(tmp_path)) {
+    fclose(in);
+    return -1;
+  }
+
+  FILE *out = fopen(tmp_path, "w");
+  if (!out) {
+    fclose(in);
+    return -1;
+  }
+
+  char line[1024];
+  int saw_l1 = 0, saw_l3 = 0, saw_miss = 0;
+  while (fgets(line, sizeof(line), in)) {
+    if (strncmp(line, "#define THR_L1", 14) == 0) {
+      fprintf(out, "#define THR_L1   %zu\n", t_l1);
+      saw_l1 = 1;
+    } else if (strncmp(line, "#define THR_L3", 14) == 0) {
+      fprintf(out, "#define THR_L3   %zu\n", t_l3);
+      saw_l3 = 1;
+    } else if (strncmp(line, "#define THR_MISS", 16) == 0) {
+      fprintf(out, "#define THR_MISS %zu\n", t_miss);
+      saw_miss = 1;
+    } else {
+      fputs(line, out);
+    }
+  }
+
+  fclose(in);
+
+  if (fclose(out) != 0 || !saw_l1 || !saw_l3 || !saw_miss) {
+    unlink(tmp_path);
+    return -1;
+  }
+
+  if (rename(tmp_path, constants_path) != 0) {
+    unlink(tmp_path);
+    return -1;
+  }
+
+  return 0;
+}
+
 static void warmup(void)
 {
   for (size_t i = 0; i < WARMUP_SAMPLES; ++i) {
@@ -172,6 +247,7 @@ int main(void)
   size_t t_l1_rounds[CALIBRATION_ROUNDS];
   size_t t_l3_rounds[CALIBRATION_ROUNDS];
   size_t t_miss_rounds[CALIBRATION_ROUNDS];
+  char constants_path[PATH_MAX];
 
   memset(array, -1, sizeof(array));
   memset(eviction_buffer, 1, sizeof(eviction_buffer));
@@ -222,6 +298,14 @@ int main(void)
   printf("  T_L1   = %zu\n", T_L1);
   printf("  T_L3   = %zu\n", T_L3);
   printf("  T_MISS = %zu\n", T_MISS);
+
+  if (build_constants_path(constants_path, sizeof(constants_path)) != 0 ||
+      write_updated_constants(constants_path, T_L1, T_L3, T_MISS) != 0) {
+    fprintf(stderr, "\nFailed to update constants.h automatically.\n");
+    return 1;
+  }
+
+  printf("\nUpdated %s\n", constants_path);
 
   return 0;
 }
