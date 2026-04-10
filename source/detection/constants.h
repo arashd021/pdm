@@ -5,8 +5,8 @@
 
 /* ---------------- Address selection Mode---------------- */
 // Uncomment exactly ONE:
-#define USE_FIXED_START_ADDR
-// #define USE_PROC_MAPS
+// #define USE_FIXED_START_ADDR
+#define USE_PROC_MAPS
 
 /* ---------------- Fixed Address + Size---------------- */
 #define START_ADDR 0x7ffff71df000
