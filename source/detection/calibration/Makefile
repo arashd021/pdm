@@ -28,7 +28,7 @@ all: $(CALIBRATION)
 # calibration (cache latency calibration tool)
 # ============================================================
 $(CALIBRATION): calibration.c
-	$(CC) -O2 -march=native -o $@ $<
+	$(CC) -O2 -march=x86-64 -o $@ $<
 
 
 # ============================================================
